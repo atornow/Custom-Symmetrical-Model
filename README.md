@@ -27,7 +27,7 @@ Install the dependencies using pip:
 <h2>Usage</h2>
 To start the model training and validation process, run the main Python file:
 
-<pre><code>python main.py</code></pre>
+<pre><code>python SymmetricalModel.py</code></pre>
 Ensure you have the <code>ModelFunctions.py</code> file in the same directory as your main script.
 
 <h2>Hyperparameters</h2>
