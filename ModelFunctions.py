@@ -4,6 +4,7 @@ import os
 import matplotlib.pyplot as plt
 from case_generator import generate_cases
 
+
 def load_or_generate_data(x, newData, newValid):
     if newData:
         valid = False
@@ -21,20 +22,22 @@ def load_or_generate_data(x, newData, newValid):
 
     return symmetrical_numbers, binary_array, validationSym, validationBinary
 
+
 def activate(x):
     return 1 / (1 + math.exp(-x))
+
 
 def activateInverse(x):
     return math.exp(x) / np.square((math.exp(x) + 1))
 
-def weightUpdater(index, EofX, XofW, Weights, newWeights, momentum, learningRate, savedChanges):
-    newChange = -1 * learningRate * (EofX * XofW)
-    newWeights[index] = Weights[index] + newChange + (momentum * savedChanges[index])
-    savedChanges[index] = newChange
 
-    return newWeights[index], newChange
+def weightUpdater(EofX, XofW):
+    newChange = (EofX * XofW)
 
-def forwardPass(Weights, Desired, case):
+    return newChange
+
+
+def forwardPass(Weights, desired, case):
     Xa, Xb, Xz = 0, 0, 0
     weightIndex = 0
     for digit in str(case):
@@ -50,65 +53,88 @@ def forwardPass(Weights, Desired, case):
     Yz = activate(Xz)
     weightIndex += 1
 
-    error = np.square(Yz - Desired) / 2
+    error = np.square(Yz - desired) / 2
 
     return Xa, Ya, Xb, Yb, Xz, Yz, weightIndex, error
 
-def backwardsPass(case, caseIndex, Weights, Desired, ErrorSet, momentum, learningRate, savedChanges):
-    newWeights = [0.0] * len(Weights)
-    Xa, Ya, Xb, Yb, Xz, Yz, weightIndex, error = forwardPass(Weights, Desired[caseIndex], case)
+
+def backwardsPass(case, Weights, desired, ErrorSet):
+    savedChanges = np.zeros(len(Weights), dtype=float)
+    Xa, Ya, Xb, Yb, Xz, Yz, weightIndex, error = forwardPass(Weights, desired, case)
     ErrorSet.append(error)
 
-    derivativeEofXz = 2 * (Yz - Desired[caseIndex]) * activateInverse(Xz)
+    derivativeEofXz = 2 * (Yz - desired) * activateInverse(Xz)
     derivativeEofXa = derivativeEofXz * Weights[8] * activateInverse(Xa)
     derivativeEofXb = derivativeEofXz * Weights[9] * activateInverse(Xb)
 
     currentDigit = len(str(case)) - 1
 
-    newWeights[weightIndex], savedChanges[weightIndex] = weightUpdater(weightIndex, derivativeEofXz, Yb, Weights, newWeights, momentum, learningRate,
-                                 savedChanges)
+    savedChanges[weightIndex] = weightUpdater(derivativeEofXz, Yb)
     weightIndex -= 1
-    newWeights[weightIndex], savedChanges[weightIndex] = weightUpdater(weightIndex, derivativeEofXz, Ya, Weights, newWeights, momentum, learningRate,
-                                 savedChanges)
+    savedChanges[weightIndex] = weightUpdater(derivativeEofXz, Ya)
     weightIndex -= 1
 
     while weightIndex >= 0:
-        newWeights[weightIndex], savedChanges[weightIndex] = weightUpdater(weightIndex, derivativeEofXb, int(str(case)[currentDigit]), Weights,
-                                     newWeights, momentum, learningRate, savedChanges)
+        savedChanges[weightIndex] = weightUpdater(derivativeEofXb, int(str(case)[currentDigit])
+                                                  )
         weightIndex -= 1
-        newWeights[weightIndex], savedChanges[weightIndex] = weightUpdater(weightIndex, derivativeEofXa, int(str(case)[currentDigit]), Weights,
-                                     newWeights, momentum, learningRate, savedChanges)
+        savedChanges[weightIndex] = weightUpdater(derivativeEofXa, int(str(case)[currentDigit])
+                                                  )
         weightIndex -= 1
         currentDigit -= 1
 
-    return newWeights, ErrorSet, savedChanges
+    return ErrorSet, savedChanges
+
 
 def generateWeights(modelSize):
     # Generates weight initializations
-    Weights = np.random.uniform(-0.3, 0.3, modelSize)
+    Weights = np.random.uniform(-0.4, 0.4, modelSize)
     np.save('initial_weights.npy', Weights)
 
 
 # Runs through Epochs number of epochs on a single Cases set
-def runEpochs(epochs, Cases, Desired, momentum, learningRate, genWeights, modelSize):
+def runEpochs(epochs, momentum, learningRate, genWeights, genData, genValid, modelSize):
+    # If new intialization weights are desired, generate them
     if genWeights:
         generateWeights(modelSize)
     Weights = np.load('initial_weights.npy')
-    savedChanges = [0.0] * modelSize
+
+    Cases, Desired, validationCases, validationDesired = load_or_generate_data(200, genData, False)
+    Cases, Desired, validationCases, validationDesired = load_or_generate_data(500, False, genValid)
+
     ErrorSetEpoch = []
-    for epoch in range(1, epochs):
+    vErrorSetEpoch = [0.0] * epochs
+    momentumSavedChanges = [0.0] * modelSize
+
+    for epoch in range(0, epochs):
         caseIndex = 0
         ErrorSet = []
+        savedChangesEpoch = np.zeros(modelSize, dtype=float)
 
-        # Train model using backwards propagation every on a per case basis
+        # Run backwards pass on each case and add EofW derivatives to savedChangesEpoch
         for case in Cases:
-            Weights, ErrorSet, savedChanges = backwardsPass(case, caseIndex, Weights, Desired, ErrorSet, momentum, learningRate, savedChanges)
+            ErrorSet, savedChanges = backwardsPass(case, Weights, Desired[caseIndex], ErrorSet)
+            savedChangesEpoch += savedChanges
             caseIndex += 1
         ErrorSetEpoch.append(ErrorSet[-1])
 
-    np.save('model_weights.npy', Weights)
+        # Average derivatives over an epoch and apply them with momentum to Weights
+        savedChangesEpoch = savedChangesEpoch / len(Cases)
+        for weightIndex in range(0, modelSize):
+            newChange = (learningRate * savedChangesEpoch[weightIndex]) + (momentum * momentumSavedChanges[weightIndex])
+            momentumSavedChanges[weightIndex] = newChange
+            Weights[weightIndex] -= newChange
 
-    return ErrorSetEpoch
+        if genValid:
+            for i in range(0, len(validationCases)):
+                Xa, Ya, Xb, Yb, Xz, Yz, weightIndex, error = forwardPass(Weights, validationDesired[i], validationCases[i])
+                vErrorSetEpoch[epoch] += error
+
+            # vErrorSetEpoch[epoch] = vErrorSetEpoch[epoch] / len(validationCases)
+
+    np.save('model_weights.npy', Weights)
+    return ErrorSetEpoch, vErrorSetEpoch
+
 
 def plot_error_set(ErrorSet):
     # Determine the size of ErrorSet
@@ -118,7 +144,7 @@ def plot_error_set(ErrorSet):
     fig, ax = plt.subplots(figsize=(10, 6))
 
     # Plotting
-    ax.plot(ErrorSet, label='Error per Case')
+    ax.plot(ErrorSet, label='Error')
 
     # Scaling the x-axis based on the size of ErrorSet
     if size > 10000000:
